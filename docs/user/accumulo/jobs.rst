@@ -101,7 +101,7 @@ slightly):
 .. code-block:: shell
 
     geomesa-accumulo$ yarn jar geomesa-accumulo-jobs/target/geomesa-accumulo-jobs_2.11-$VERSION-shaded.jar \
-        org.locationtech.geomesa.jobs.index.AttributeIndexJob \
+        org.locationtech.geomesa.jobs.accumulo.index.AttributeIndexJob \
         --geomesa.input.instanceId <instance> \
         --geomesa.input.zookeepers <zookeepers> \
         --geomesa.input.user <user> \
@@ -135,7 +135,7 @@ slightly):
 .. code-block:: shell
 
     geomesa-accumulo$ yarn jar geomesa-accumulo-jobs/target/geomesa-accumulo-jobs_2.11-$VERSION-shaded.jar \
-        org.locationtech.geomesa.jobs.index.SchemaCopyJob \
+        org.locationtech.geomesa.jobs.accumulo.index.SchemaCopyJob \
         --geomesa.input.instanceId <instance> \
         --geomesa.output.instanceId <instance> \
         --geomesa.input.zookeepers <zookeepers> \
