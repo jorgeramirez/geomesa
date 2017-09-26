@@ -12,13 +12,14 @@ import java.io.{File, InputStream}
 import java.util.concurrent.atomic.AtomicLong
 
 import com.typesafe.config.{Config, ConfigRenderOptions}
-import org.apache.commons.pool2.BasePooledObjectFactory
+import org.apache.commons.pool2.{BasePooledObjectFactory, ObjectPool}
 import org.apache.commons.pool2.impl.{DefaultPooledObject, GenericObjectPool}
 import org.apache.hadoop.mapreduce.Job
 import org.apache.hadoop.mapreduce.lib.input.FileInputFormat
-import org.locationtech.geomesa.convert.{DefaultCounter, SimpleFeatureConverter, SimpleFeatureConverters}
+import org.locationtech.geomesa.convert.{DefaultCounter, EvaluationContext, SimpleFeatureConverter, SimpleFeatureConverters}
 import org.locationtech.geomesa.jobs.mapreduce.{ConverterInputFormat, GeoMesaOutputFormat}
 import org.locationtech.geomesa.tools.Command
+import org.locationtech.geomesa.tools.DistributedRunParam.RunModes.RunMode
 import org.locationtech.geomesa.tools.ingest.AbstractIngest.StatusCallback
 import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
 
@@ -37,10 +38,11 @@ class ConverterIngest(sft: SimpleFeatureType,
                       dsParams: Map[String, String],
                       converterConfig: Config,
                       inputs: Seq[String],
+                      mode: Option[RunMode],
                       libjarsFile: String,
                       libjarsPaths: Iterator[() => Seq[File]],
                       numLocalThreads: Int)
-    extends AbstractIngest(dsParams, sft.getTypeName, inputs, libjarsFile, libjarsPaths, numLocalThreads) {
+    extends AbstractIngest(dsParams, sft.getTypeName, inputs, mode, libjarsFile, libjarsPaths, numLocalThreads) {
 
   override def beforeRunTasks(): Unit = {
     // create schema for the feature prior to Ingest job
@@ -48,36 +50,36 @@ class ConverterIngest(sft: SimpleFeatureType,
     ds.createSchema(sft)
   }
 
-  val factory = new BasePooledObjectFactory[SimpleFeatureConverter[_]] {
+  protected val factory = new BasePooledObjectFactory[SimpleFeatureConverter[_]] {
     override def wrap(obj: SimpleFeatureConverter[_]) = new DefaultPooledObject[SimpleFeatureConverter[_]](obj)
     override def create(): SimpleFeatureConverter[_] = SimpleFeatureConverters.build(sft, converterConfig)
   }
 
-  private val converterPool =
-    new GenericObjectPool[SimpleFeatureConverter[_]](factory)
+  protected val converters = new GenericObjectPool[SimpleFeatureConverter[_]](factory)
 
-  override def createLocalConverter(file: File, failures: AtomicLong): LocalIngestConverter =
-    new LocalIngestConverter {
-
-      class LocalIngestCounter extends DefaultCounter {
-        // keep track of failure at a global level, keep line counts and success local
-        override def incFailure(i: Long): Unit = failures.getAndAdd(i)
-        override def getFailure: Long          = failures.get()
-      }
-
-      val converter = converterPool.borrowObject()
-      val ec = converter.createEvaluationContext(Map("inputFilePath" -> file.getAbsolutePath), new LocalIngestCounter)
-
-      override def convert(is: InputStream): (SimpleFeatureType, Iterator[SimpleFeature]) = (sft, converter.process(is, ec))
-      override def close(): Unit = {
-        converterPool.returnObject(converter)
-      }
-    }
+  override def createLocalConverter(path: String, failures: AtomicLong): LocalIngestConverter =
+    new LocalIngestConverterImpl(sft, path, converters, failures)
 
   override def runDistributedJob(statusCallback: StatusCallback): (Long, Long) = {
     val job = new ConverterIngestJob(sft, converterConfig)
     job.run(dsParams, sft.getTypeName, inputs, libjarsFile, libjarsPaths, statusCallback)
   }
+}
+
+class LocalIngestConverterImpl(sft: SimpleFeatureType, path: String, converters: ObjectPool[SimpleFeatureConverter[_]], failures: AtomicLong)
+    extends LocalIngestConverter {
+
+  class LocalIngestCounter extends DefaultCounter {
+    // keep track of failure at a global level, keep line counts and success local
+    override def incFailure(i: Long): Unit = failures.getAndAdd(i)
+    override def getFailure: Long          = failures.get()
+  }
+
+  protected val converter: SimpleFeatureConverter[_] = converters.borrowObject()
+  protected val ec: EvaluationContext = converter.createEvaluationContext(Map("inputFilePath" -> path), new LocalIngestCounter)
+
+  override def convert(is: InputStream): (SimpleFeatureType, Iterator[SimpleFeature]) = (sft, converter.process(is, ec))
+  override def close(): Unit = converters.returnObject(converter)
 }
 
 /**

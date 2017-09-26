@@ -16,6 +16,8 @@ import org.apache.hadoop.hbase.client._
 import org.apache.hadoop.hbase.filter.MultiRowRangeFilter.RowRange
 import org.apache.hadoop.hbase.filter.{FilterList, MultiRowRangeFilter, Filter => HFilter}
 import org.locationtech.geomesa.hbase.coprocessor.utils.CoprocessorConfig
+import org.locationtech.geomesa.hbase.data.HBaseQueryPlan.filterToString
+import org.locationtech.geomesa.hbase.filters.{Z2HBaseFilter, Z3HBaseFilter}
 import org.locationtech.geomesa.hbase.utils.HBaseBatchScan
 import org.locationtech.geomesa.hbase.{HBaseFilterStrategyType, HBaseQueryPlanType}
 import org.locationtech.geomesa.index.index.IndexAdapter
@@ -30,6 +32,8 @@ sealed trait HBaseQueryPlan extends HBaseQueryPlanType {
 
   override def explain(explainer: Explainer, prefix: String = ""): Unit =
     HBaseQueryPlan.explain(this, explainer, prefix)
+
+  protected def explain(explainer: Explainer): Unit
 }
 
 object HBaseQueryPlan {
@@ -37,15 +41,31 @@ object HBaseQueryPlan {
   def explain(plan: HBaseQueryPlan, explainer: Explainer, prefix: String): Unit = {
     explainer.pushLevel(s"${prefix}Plan: ${plan.getClass.getName}")
     explainer(s"Table: ${Option(plan.table).orNull}")
-    explainer(s"Ranges (${plan.ranges.size}): { ${plan.ranges.take(5).map(rangeToString).mkString(", ")} }")
     explainer(s"Filter: ${plan.filter.toString}")
+    explainer(s"Ranges (${plan.ranges.size}): ${plan.ranges.take(5).map(rangeToString).mkString(", ")}")
+    plan.explain(explainer)
     explainer.popLevel()
   }
 
-  private def rangeToString(range: Query): String = {
+  private [data] def rangeToString(range: Query): String = {
+    // based on accumulo's byte representation
+    def printable(b: Byte): String = {
+      val c = 0xff & b
+      if (c >= 32 && c <= 126) { c.toChar.toString } else { f"%%$c%02x;" }
+    }
     range match {
-      case r: Scan => s"[${r.getStartRow.mkString("")},${r.getStopRow.mkString("")}]"
-      case r: Get => s"[${r.getRow.mkString("")},${r.getRow.mkString("")}]"
+      case r: Scan => s"[${r.getStartRow.map(printable).mkString("")},${r.getStopRow.map(printable).mkString("")}]"
+      case r: Get  => s"[${r.getRow.map(printable).mkString("")},${r.getRow.map(printable).mkString("")}]"
+    }
+  }
+
+  private [data] def filterToString(filter: HFilter): String = {
+    import scala.collection.JavaConversions._
+    filter match {
+      case f: FilterList    => f.getFilters.map(filterToString).mkString(", ")
+      case f: Z3HBaseFilter => s"Z3HBaseFilter[xy: (${f.filter.xyvals.map(_.mkString(",")).mkString(")(")}), times ${f.filter.minEpoch} to ${f.filter.maxEpoch}: (${f.filter.tvals.map(_.map(_.mkString(",")).mkString(" ")).mkString(")(")})]"
+      case f: Z2HBaseFilter => s"Z2HBaseFilter[xy: (${f.filter.xyvals.map(_.mkString(",")).mkString(")(")})]"
+      case f                => f.toString
     }
   }
 }
@@ -55,6 +75,7 @@ case class EmptyPlan(filter: HBaseFilterStrategyType) extends HBaseQueryPlan {
   override val table: TableName = null
   override val ranges: Seq[Query] = Seq.empty
   override def scan(ds: HBaseDataStore): CloseableIterator[SimpleFeature] = CloseableIterator.empty
+  override protected def explain(explainer: Explainer): Unit = {}
 }
 
 case class ScanPlan(filter: HBaseFilterStrategyType,
@@ -65,6 +86,10 @@ case class ScanPlan(filter: HBaseFilterStrategyType,
     ranges.foreach(ds.applySecurity)
     val results = new HBaseBatchScan(ds.connection, table, ranges, ds.config.queryThreads, 100000)
     SelfClosingIterator(resultsToFeatures(results), results.close())
+  }
+
+  override protected def explain(explainer: Explainer): Unit = {
+    explainer(s"Remote filters: ${ranges.headOption.flatMap(r => Option(r.getFilter)).map(filterToString).getOrElse("none")}")
   }
 }
 
@@ -113,11 +138,9 @@ case class CoprocessorPlan(filter: HBaseFilterStrategyType,
     (scan, filterList)
   }
 
-  override def explain(explainer: Explainer, prefix: String): Unit = {
-    super.explain(explainer, prefix)
-    val filterString = remoteFilters.sortBy(_._1).map( f => s"${f._1}[${f._2.getClass.getName}]" ).mkString("{", ", ", "}")
-    explainer.pushLevel("Remote Filters: " + filterString)
-    explainer("Coprocessor Options: " + coprocessorConfig.options.map( m => s"[${m._1}:${m._2}]").mkString("{", ", ", "}"))
-    explainer.popLevel()
+  override protected def explain(explainer: Explainer): Unit = {
+    val filterString = remoteFilters.sortBy(_._1).map( f => s"${f._1} ${f._2}" ).mkString("], [")
+    explainer(s"Remote filters: ${if (filterString.isEmpty) { "none" } else { filterString }}")
+    explainer("Coprocessor options: " + coprocessorConfig.options.map(m => s"[${m._1}:${m._2}]").mkString(", "))
   }
 }

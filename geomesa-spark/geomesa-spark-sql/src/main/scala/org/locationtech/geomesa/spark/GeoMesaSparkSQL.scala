@@ -33,6 +33,7 @@ import org.opengis.feature.`type`._
 import org.opengis.feature.simple.{SimpleFeature, SimpleFeatureType}
 import org.apache.spark.sql.sources.Filter
 import com.vividsolutions.jts.index.sweepline.{SweepLineIndex, SweepLineInterval, SweepLineOverlapAction}
+import org.locationtech.geomesa.utils.collection.SelfClosingIterator
 import org.locationtech.geomesa.utils.text.WKTUtils
 
 import scala.collection.Iterator
@@ -345,7 +346,7 @@ case class GeoMesaJoinRelation(sqlContext: SQLContext,
 
     // Extract geometry indexes and spatial function from condition expression and relation SFTs
     val (leftIndex, rightIndex, conditionFunction) = condition match {
-      case ScalaUDF(function: ((Geometry, Geometry) => Boolean), _, children: Seq[AttributeReference], _) =>
+      case ScalaUDF(function: ((Geometry, Geometry) => Boolean), _, children: Seq[AttributeReference], _, _) =>
         // Because the predicate may not have parameters in the right order, we must check both
         val leftAttr = children(0).name
         val rightAttr = children(1).name
@@ -634,14 +635,11 @@ object RelationUtils extends LazyLogging {
 
     val extractors = SparkUtils.getExtractors(requiredColumns, schema)
 
-    import org.locationtech.geomesa.utils.geotools.Conversions.RichSimpleFeatureReader
-
     val requiredAttributes = requiredColumns.filterNot(_ == "__fid__")
     val result = indexRDD.flatMap { engine =>
       val cqlFilter = ECQL.toFilter(filterString)
       val query = new Query(params(GEOMESA_SQL_FEATURE), cqlFilter, requiredAttributes)
-      val fr = engine.getFeatureReader(query, Transaction.AUTO_COMMIT)
-      fr.toIterator
+      SelfClosingIterator(engine.getFeatureReader(query, Transaction.AUTO_COMMIT))
     }.map(SparkUtils.sf2row(schema, _, extractors))
 
     result.asInstanceOf[RDD[Row]]
@@ -671,14 +669,11 @@ object RelationUtils extends LazyLogging {
 
     val extractors = SparkUtils.getExtractors(requiredColumns, schema)
 
-    import org.locationtech.geomesa.utils.geotools.Conversions.RichSimpleFeatureReader
-
     val requiredAttributes = requiredColumns.filterNot(_ == "__fid__")
     val result = reducedRdd.flatMap { case (key, engine) =>
       val cqlFilter = ECQL.toFilter(filterString)
       val query = new Query(params(GEOMESA_SQL_FEATURE), cqlFilter, requiredAttributes)
-      val fr = engine.getFeatureReader(query, Transaction.AUTO_COMMIT)
-      fr.toIterator
+      SelfClosingIterator(engine.getFeatureReader(query, Transaction.AUTO_COMMIT))
     }.map(SparkUtils.sf2row(schema, _, extractors))
     result.asInstanceOf[RDD[Row]]
   }

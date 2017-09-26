@@ -18,7 +18,7 @@ import org.locationtech.geomesa.accumulo.AccumuloFeatureIndexType
 import org.locationtech.geomesa.accumulo.index.AccumuloFeatureIndex
 import org.locationtech.geomesa.features.SerializationOption.SerializationOptions
 import org.locationtech.geomesa.features.kryo.KryoFeatureSerializer
-import org.locationtech.geomesa.index.index.AttributeRowDecoder
+import org.locationtech.geomesa.index.index.AttributeIndex.AttributeRowDecoder
 import org.locationtech.geomesa.index.iterators.IteratorCache
 import org.locationtech.geomesa.utils.geotools.SimpleFeatureTypes
 import org.opengis.feature.simple.SimpleFeatureType
@@ -27,9 +27,13 @@ import scala.util.Try
 import scala.util.control.NonFatal
 
 /**
- * Iterator that operates on kryo encoded attribute index rows. It will modify the value
+  * Iterator that operates on kryo encoded attribute index rows. It will modify the value
   * (kryo encoded simple feature) by setting the attribute from the row key.
- */
+  *
+  * It is expected to run *after* the normal iterator stack - thus the key value received in getTopValue
+  * will be the already transformed feature result, with a null value for the attribute in question. This
+  * iterator will set the attribute value based on the row, then re-serialize the feature
+  */
 class KryoAttributeKeyValueIterator extends SortedKeyValueIterator[Key, Value] with LazyLogging {
 
   import KryoAttributeKeyValueIterator._

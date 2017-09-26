@@ -57,6 +57,10 @@
             <artifactId>geomesa-process-vector_${scala.binary.version}</artifactId>
         </dependency>
         <dependency>
+            <groupId>org.locationtech.geomesa</groupId>
+            <artifactId>geomesa-zk-utils_${scala.binary.version}</artifactId>
+        </dependency>
+        <dependency>
             <groupId>org.geotools</groupId>
             <artifactId>gt-main</artifactId>
         </dependency>
@@ -86,7 +90,7 @@
         </dependency>
         <dependency>
             <groupId>com.vividsolutions</groupId>
-            <artifactId>jts</artifactId>
+            <artifactId>jts-core</artifactId>
         </dependency>
         <dependency>
             <groupId>joda-time</groupId>

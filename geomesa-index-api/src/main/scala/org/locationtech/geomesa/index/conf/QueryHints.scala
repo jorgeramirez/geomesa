@@ -100,8 +100,8 @@ object QueryHints {
       Option(hints.get(ARROW_DICTIONARY_COMPUTE).asInstanceOf[java.lang.Boolean]).forall(Boolean.unbox)
     def isArrowCachedDictionaries: Boolean =
       Option(hints.get(ARROW_DICTIONARY_CACHED).asInstanceOf[java.lang.Boolean]).forall(Boolean.unbox)
-    def getArrowDictionaryEncodedValues: Map[String, Seq[AnyRef]] =
-      Option(hints.get(ARROW_DICTIONARY_VALUES).asInstanceOf[String]).map(StringSerialization.decodeSeqMap).getOrElse(Map.empty)
+    def getArrowDictionaryEncodedValues(sft: SimpleFeatureType): Map[String, Seq[AnyRef]] =
+      Option(hints.get(ARROW_DICTIONARY_VALUES).asInstanceOf[String]).map(StringSerialization.decodeSeqMap(sft, _)).getOrElse(Map.empty)
     def setArrowDictionaryEncodedValues(values: Map[String, Seq[AnyRef]]): Unit =
       hints.put(ARROW_DICTIONARY_VALUES, StringSerialization.encodeSeqMap(values))
     def getArrowBatchSize: Option[Int] = Option(hints.get(ARROW_BATCH_SIZE).asInstanceOf[Integer]).map(_.intValue)
@@ -120,6 +120,10 @@ object QueryHints {
       Option(hints.get(Internal.TRANSFORM_SCHEMA).asInstanceOf[SimpleFeatureType])
     def getTransform: Option[(String, SimpleFeatureType)] =
       hints.getTransformDefinition.flatMap(d => hints.getTransformSchema.map((d, _)))
+    def clearTransforms(): Unit = {
+      hints.remove(Internal.TRANSFORM_SCHEMA)
+      hints.remove(Internal.TRANSFORMS)
+    }
     def isExactCount: Option[Boolean] = Option(hints.get(EXACT_COUNT)).map(_.asInstanceOf[Boolean])
     def isLambdaQueryPersistent: Boolean =
       Option(hints.get(LAMBDA_QUERY_PERSISTENT).asInstanceOf[java.lang.Boolean]).forall(_.booleanValue)
